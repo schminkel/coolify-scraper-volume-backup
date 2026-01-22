@@ -6,5 +6,6 @@ scraped-data/
 screenshots/
 *.log
 .env
+.github-secrets.env
 pnpm-lock.yaml
 .DS_Store

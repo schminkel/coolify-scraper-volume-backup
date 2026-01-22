@@ -1,0 +1,139 @@
+name: Weekly Coolify Scraper
+
+on:
+  schedule:
+    # Runs every Sunday at 00:00 UTC
+    - cron: '0 0 * * 0'
+  # Allow manual trigger for testing
+  workflow_dispatch:
+
+jobs:
+  scrape-coolify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+
+      - name: Install dependencies
+        working-directory: ./coolify-scraper
+        run: pnpm install
+
+      - name: Install Playwright browsers
+        working-directory: ./coolify-scraper
+        run: pnpm exec playwright install chromium --with-deps
+
+      - name: Run scraper
+        working-directory: ./coolify-scraper
+        env:
+          COOLIFY_URL: ${{ secrets.COOLIFY_URL }}
+          COOLIFY_EMAIL: ${{ secrets.COOLIFY_EMAIL }}
+          COOLIFY_PASSWORD: ${{ secrets.COOLIFY_PASSWORD }}
+        run: pnpm test
+
+      - name: Create compressed backup
+        if: always()
+        working-directory: ./coolify-scraper
+        run: |
+          TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+          echo "BACKUP_TIMESTAMP=${TIMESTAMP}" >> $GITHUB_ENV
+          
+          # Create backup with timestamp
+          mkdir -p ../backup-temp
+          tar -czf ../backup-temp/coolify-backup-${TIMESTAMP}.tar.gz \
+            scraped-data/ \
+            screenshots/ \
+            playwright-report/ 2>/dev/null || true
+          
+          # Log backup size
+          if [ -f ../backup-temp/coolify-backup-${TIMESTAMP}.tar.gz ]; then
+            ls -lh ../backup-temp/coolify-backup-${TIMESTAMP}.tar.gz
+            echo "Backup created successfully"
+          else
+            echo "Warning: Backup file not created"
+          fi
+
+      - name: Configure AWS credentials
+        if: always()
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Upload to S3 with encryption
+        if: always()
+        run: |
+          BUCKET_NAME="${{ secrets.S3_BUCKET_NAME }}"
+          BACKUP_FILE="backup-temp/coolify-backup-${BACKUP_TIMESTAMP}.tar.gz"
+          S3_PATH="s3://${BUCKET_NAME}/coolify-scraper-backups/coolify-backup-${BACKUP_TIMESTAMP}.tar.gz"
+          
+          if [ -f "${BACKUP_FILE}" ]; then
+            echo "Uploading backup to S3..."
+            aws s3 cp "${BACKUP_FILE}" "${S3_PATH}" \
+              --server-side-encryption AES256 \
+              --metadata "workflow-run=${{ github.run_number }},date=$(date -u +%Y-%m-%d),source=github-actions"
+            
+            echo "✓ Backup uploaded successfully to ${S3_PATH}"
+            
+            # Verify upload
+            if aws s3 ls "${S3_PATH}" > /dev/null 2>&1; then
+              echo "✓ Upload verified"
+            else
+              echo "✗ Upload verification failed"
+              exit 1
+            fi
+          else
+            echo "✗ No backup file found to upload"
+            exit 1
+          fi
+
+      - name: Cleanup old S3 backups
+        if: always()
+        run: |
+          BUCKET_NAME="${{ secrets.S3_BUCKET_NAME }}"
+          RETENTION_DAYS="${{ secrets.BACKUP_RETENTION_DAYS || 30 }}"
+          
+          echo "Cleaning up backups older than ${RETENTION_DAYS} days..."
+          
+          # Calculate date threshold
+          CUTOFF_DATE=$(date -u -d "${RETENTION_DAYS} days ago" +%Y%m%d 2>/dev/null || date -u -v-${RETENTION_DAYS}d +%Y%m%d)
+          
+          # List and delete old backups
+          aws s3 ls "s3://${BUCKET_NAME}/coolify-scraper-backups/" | \
+            grep "coolify-backup-" | \
+            while read -r line; do
+              FILE_DATE=$(echo "$line" | grep -oE '[0-9]{8}' | head -1)
+              FILE_NAME=$(echo "$line" | awk '{print $4}')
+              
+              if [ "${FILE_DATE}" -lt "${CUTOFF_DATE}" ]; then
+                echo "Deleting old backup: ${FILE_NAME} (${FILE_DATE})"
+                aws s3 rm "s3://${BUCKET_NAME}/coolify-scraper-backups/${FILE_NAME}"
+              fi
+            done
+          
+          echo "✓ Cleanup complete"
+
+      - name: Cleanup local files
+        if: always()
+        run: |
+          rm -rf backup-temp
+          echo "✓ Local temporary files cleaned up"
+
+      - name: Send notification on failure
+        if: failure()
+        run: |
+          echo "::error::Coolify scraper workflow failed. Check logs for details."
+          echo "Run number: ${{ github.run_number }}"
+          echo "Run URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
