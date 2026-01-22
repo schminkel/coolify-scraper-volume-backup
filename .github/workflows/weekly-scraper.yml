@@ -81,7 +81,9 @@ jobs:
           
           if [ -f "${BACKUP_FILE}" ]; then
             echo "Uploading backup to S3..."
-            aws s3 cp "${BACKUP_FILE}" "${S3_PATH}" --sse AES256 --metadata "workflow-run=${{ github.run_number }},date=$(date -u +%Y-%m-%d),source=github-actions"
+            aws s3 cp "${BACKUP_FILE}" "${S3_PATH}" \
+              --sse AES256 \
+              --metadata workflow-run=${{ github.run_number }},date=$(date -u +%Y-%m-%d),source=github-actions
             
             echo "✓ Backup uploaded successfully to ${S3_PATH}"
             
