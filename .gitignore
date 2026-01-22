@@ -1,0 +1,10 @@
+node_modules/
+test-results/
+playwright-report/
+playwright/.cache/
+scraped-data/
+screenshots/
+*.log
+.env
+pnpm-lock.yaml
+.DS_Store

@@ -1,0 +1,22 @@
+{
+  "name": "coolify-scraper",
+  "version": "1.0.0",
+  "description": "Playwright project to test and scrape Coolify",
+  "scripts": {
+    "test": "playwright test",
+    "test:clean": "rm -rf scraped-data screenshots test-results playwright-report && playwright test",
+    "test:headed": "HEADED=1 playwright test --headed",
+    "test:debug": "playwright test --debug"
+  },
+  "keywords": [
+    "playwright",
+    "testing",
+    "scraping"
+  ],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@playwright/test": "^1.41.0",
+    "dotenv": "^17.2.3"
+  }
+}
